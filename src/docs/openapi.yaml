@@ -1,0 +1,56 @@
+openapi: 3.0.3
+info:
+  title: SLSEA Real-Time Solar Generation Data API
+  version: 1.0.0
+  description: |
+    REST API (Richardson Maturity Level 2) for the Sri Lanka Sustainable Energy Authority.
+    Metering devices push generation readings (write path); SLSEA users read operational
+    and analytical data scoped by jurisdiction (read path). JSON is the only representation.
+servers:
+  - url: /api/v1
+tags:
+  - name: Health
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness and database readiness
+      responses:
+        '200':
+          description: API and database are up
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: Database unreachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+components:
+  schemas:
+    Health:
+      type: object
+      properties:
+        status: { type: string, example: ok }
+        database: { type: string, example: up }
+        timestamp: { type: string, format: date-time }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code: { type: string, example: VALIDATION_ERROR }
+            message: { type: string, example: Request body failed validation }
+            details:
+              type: array
+              items:
+                type: object
+                required: [issue]
+                properties:
+                  field: { type: string, example: powerKw }
+                  issue: { type: string, example: must be a non-negative number }
