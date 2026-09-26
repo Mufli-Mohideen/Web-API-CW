@@ -1,0 +1,126 @@
+// SLSEA Real-Time Solar Generation Data API — data model.
+//
+// Geographic-and-asset hierarchy:
+//   Province 1──* District 1──* GridSubstation 1──* SolarInstallation 1──* GenerationReading
+// plus User (an SLSEA read-client scoped by jurisdiction).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Province {
+  id        Int        @id @default(autoincrement())
+  code      String     @unique @db.VarChar(8) // e.g. "WP" (Western Province)
+  name      String     @unique
+  districts District[]
+  users     User[]
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("provinces")
+}
+
+model District {
+  id          Int              @id @default(autoincrement())
+  code        String           @unique @db.VarChar(8) // e.g. "CMB" (Colombo)
+  name        String           @unique
+  provinceId  Int              @map("province_id")
+  province    Province         @relation(fields: [provinceId], references: [id], onDelete: Restrict)
+  substations GridSubstation[]
+  users       User[]
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([provinceId])
+  @@map("districts")
+}
+
+model GridSubstation {
+  id            Int                 @id @default(autoincrement())
+  code          String              @unique @db.VarChar(16)
+  name          String
+  districtId    Int                 @map("district_id")
+  district      District            @relation(fields: [districtId], references: [id], onDelete: Restrict)
+  capacityMva   Float?              @map("capacity_mva")
+  installations SolarInstallation[]
+  createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([districtId])
+  @@map("grid_substations")
+}
+
+enum InstallationStatus {
+  ACTIVE
+  INACTIVE
+  DECOMMISSIONED
+}
+
+model SolarInstallation {
+  id             Int                 @id @default(autoincrement())
+  // The meter/inverter identifier is an attribute of the installation, not a separate Device entity.
+  meterId        String              @unique @map("meter_id") @db.VarChar(32)
+  name           String
+  address        String?
+  latitude       Float?
+  longitude      Float?
+  capacityKw     Float               @map("capacity_kw")
+  status         InstallationStatus  @default(ACTIVE)
+  commissionedAt DateTime?           @map("commissioned_at") @db.Date
+  substationId   Int                 @map("substation_id")
+  substation     GridSubstation      @relation(fields: [substationId], references: [id], onDelete: Restrict)
+  // Device credential (write path). Only a SHA-256 hash of the device API key is stored.
+  apiKeyHash     String              @unique @map("api_key_hash") @db.Char(64)
+  readings       GenerationReading[]
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([substationId])
+  @@map("solar_installations")
+}
+
+// Append-only time series. Readings are never updated in place; the latest value is derived.
+model GenerationReading {
+  id             BigInt            @id @default(autoincrement())
+  installationId Int               @map("installation_id")
+  installation   SolarInstallation @relation(fields: [installationId], references: [id], onDelete: Cascade)
+  timestamp      DateTime          @db.Timestamptz(3) // when the device measured the reading
+  powerKw        Float             @map("power_kw") // instantaneous power
+  energyKwh      Float             @map("energy_kwh") // cumulative lifetime energy counter
+  voltageV       Float             @map("voltage_v")
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(3) // when the API received it
+
+  // One reading per installation per instant: makes device retries detectable (409) and
+  // backs "latest reading" and time-window queries.
+  @@unique([installationId, timestamp])
+  @@index([timestamp])
+  @@map("generation_readings")
+}
+
+enum UserRole {
+  NATIONAL
+  PROVINCIAL
+  DISTRICT
+}
+
+// SLSEA read-client. Jurisdiction: NATIONAL => none, PROVINCIAL => provinceId, DISTRICT => districtId.
+model User {
+  id           Int       @id @default(autoincrement())
+  email        String    @unique
+  name         String
+  passwordHash String    @map("password_hash")
+  role         UserRole
+  provinceId   Int?      @map("province_id")
+  province     Province? @relation(fields: [provinceId], references: [id], onDelete: Restrict)
+  districtId   Int?      @map("district_id")
+  district     District? @relation(fields: [districtId], references: [id], onDelete: Restrict)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("users")
+}
