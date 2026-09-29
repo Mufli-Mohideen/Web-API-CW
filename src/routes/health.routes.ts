@@ -1,16 +1,12 @@
 import { Router } from 'express';
-import { prisma } from '../lib/prisma';
+import { pingDB } from '../db';
 
 export const healthRouter = Router();
 
 // Liveness + database readiness, used to demonstrate the deployment is operational.
 healthRouter.get('/', async (_req, res) => {
-  let database = 'up';
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-  } catch {
-    database = 'down';
-  }
+  const database = (await pingDB()) ? 'up' : 'down';
+  res.set('Cache-Control', 'no-store');
   res.status(database === 'up' ? 200 : 503).json({
     status: database === 'up' ? 'ok' : 'degraded',
     database,
