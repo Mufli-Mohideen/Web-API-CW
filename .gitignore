@@ -6,3 +6,6 @@ dist/
 *.log
 .DS_Store
 coverage/
+
+# Personal study notes (not part of the submission)
+VIVA_NOTES.md
