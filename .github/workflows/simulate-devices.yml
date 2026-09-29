@@ -1,0 +1,29 @@
+# Pushes the next 15-minute readings to the deployed API as each metering device would.
+# Configure in GitHub: Settings -> Secrets and variables -> Actions
+#   variable API_BASE_URL (e.g. https://slsea-solar-api.onrender.com)
+#   secrets  DEVICE_KEY_SECRET, SEED_USER_PASSWORD (the values used when seeding)
+name: Simulate metering devices
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  push-readings:
+    if: ${{ vars.API_BASE_URL != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Wake the service (free hosting sleeps when idle)
+        run: curl -s --retry 6 --retry-delay 10 --retry-all-errors "${{ vars.API_BASE_URL }}/api/v1/health"
+      - run: npm run simulate -- "${{ vars.API_BASE_URL }}"
+        env:
+          DEVICE_KEY_SECRET: ${{ secrets.DEVICE_KEY_SECRET }}
+          SEED_USER_PASSWORD: ${{ secrets.SEED_USER_PASSWORD }}
