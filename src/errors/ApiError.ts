@@ -44,4 +44,12 @@ export class ApiError extends Error {
   static conflict(message: string, details: ErrorDetail[] = []) {
     return new ApiError(409, 'CONFLICT', message, details);
   }
+  static preconditionFailed(message = 'The resource has changed since you last retrieved it') {
+    return new ApiError(412, 'PRECONDITION_FAILED', message, [
+      { field: 'If-Match', issue: 'does not match the current ETag; GET the resource again and retry' },
+    ]);
+  }
+  static unprocessable(message: string, details: ErrorDetail[] = []) {
+    return new ApiError(422, 'UNPROCESSABLE_ENTITY', message, details);
+  }
 }
