@@ -5,13 +5,13 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "prisma generate && tsc",
+    "build": "tsc",
     "start": "node dist/server.js",
-    "typecheck": "tsc --noEmit",
-    "db:migrate": "prisma migrate dev",
-    "db:deploy": "prisma migrate deploy",
-    "db:seed": "tsx prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "typecheck": "tsc --noEmit -p tsconfig.scripts.json",
+    "seed": "tsx scripts/seed.ts",
+    "device-key": "tsx scripts/device-key.ts",
+    "simulate": "tsx scripts/simulate-devices.ts",
+    "smoke": "tsx scripts/smoke.ts"
   },
   "repository": {
     "type": "git",
@@ -21,28 +21,29 @@
   "license": "UNLICENSED",
   "type": "commonjs",
   "dependencies": {
-    "@prisma/client": "^6.19.3",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^18.0.4",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
     "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongodb": "^7.7.0",
     "swagger-ui-express": "^5.0.1",
-    "yaml": "^2.9.1"
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^26.6.3",
     "@types/swagger-ui-express": "^4.1.8",
-    "prisma": "^6.19.3",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3"
   },
   "private": true,
   "engines": {
     "node": ">=20"
-  },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
   }
 }
