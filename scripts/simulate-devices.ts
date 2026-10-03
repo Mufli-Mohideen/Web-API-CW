@@ -13,8 +13,10 @@ import { floorToSlot, simulateSlot, SLOT_MS } from './solarModel';
 const base = (process.argv[2] ?? `http://localhost:${process.env.PORT ?? 3000}`).replace(/\/$/, '') + '/api/v1';
 const secret = process.env.DEVICE_KEY_SECRET ?? 'slsea-demo-device-secret';
 const password = process.env.SEED_USER_PASSWORD ?? 'Slsea@2026';
-const MAX_POSTS_PER_DEVICE = 8; // after a long gap, only the most recent slots are sent
-const CONCURRENCY = 8;
+// GitHub only honours the 15-minute schedule loosely (runs can be hours apart on a quiet repo),
+// so each run back-fills up to 12 hours of missed slots; anything older stays a gap.
+const MAX_POSTS_PER_DEVICE = Number(process.env.MAX_POSTS_PER_DEVICE ?? 48);
+const CONCURRENCY = 16;
 
 interface Installation {
   id: string;
