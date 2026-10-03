@@ -5,8 +5,9 @@ Sri Lanka Sustainable Energy Authority's rooftop-solar data system: metering dev
 generation readings, and jurisdiction-scoped SLSEA users read the operational (live) and
 analytical (historical) views.
 
-- **Live API:** `https://<your-deployment>/api/v1`
-- **Swagger UI:** `https://<your-deployment>/docs` (raw document at `/openapi.json`)
+- **Live API:** https://slsea-solar-api-3w9p.onrender.com/api/v1 (health: [/api/v1/health](https://slsea-solar-api-3w9p.onrender.com/api/v1/health))
+- **Swagger UI:** https://slsea-solar-api-3w9p.onrender.com/docs (raw document at [/openapi.json](https://slsea-solar-api-3w9p.onrender.com/openapi.json))
+- Hosted on Render (free tier: the first request after an idle period can take 30–50 s while the service wakes).
 
 ## Stack
 
@@ -113,12 +114,13 @@ npm run smoke          # end-to-end checks against the running server
 
 ## Deployment (Render + MongoDB Atlas)
 
-1. **Atlas:** create a database user, and under *Network Access* allow `0.0.0.0/0` (Render has
-   no fixed outbound IP). The API uses database `slsea_solar_db`.
+1. **Atlas:** create a database user, and under *Network Access* allow Render's published outbound
+   IP ranges (listed on the service's *Connect* tab) plus your own IP for seeding. The API uses
+   database `slsea_solar_db`.
 2. **Seed** from your machine against Atlas: put the Atlas values in `.env`, then run `npm run seed`.
 3. **Render:** *New → Blueprint* and pick this repo (it reads [render.yaml](render.yaml)). Enter
    `MONGO_USER`, `MONGO_PASSWORD` and `MONGO_CLUSTER`; `JWT_SECRET` is generated for you.
-4. **Verify:** `npm run smoke -- https://<service>.onrender.com`.
+4. **Verify:** `npm run smoke -- https://slsea-solar-api-3w9p.onrender.com` (all 50 checks pass).
 5. **Keep readings live (optional):** in GitHub *Settings → Secrets and variables → Actions*, add
    the variable `API_BASE_URL` and the secrets `DEVICE_KEY_SECRET` and `SEED_USER_PASSWORD`. The
    [simulate-devices](.github/workflows/simulate-devices.yml) workflow then pushes readings every
