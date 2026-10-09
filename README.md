@@ -39,7 +39,8 @@ All paths are under `/api/v1`.
 
 | Method | Path | Kind | Client |
 | --- | --- | --- | --- |
-| POST | `/auth/tokens` | credential exchange | anyone |
+| POST | `/auth/tokens` | credential exchange (users) | anyone |
+| POST | `/auth/device-tokens` | credential exchange (devices: API key → scoped JWT) | device |
 | GET | `/users/me` | atomic | user |
 | GET | `/provinces`, `/provinces/{id}` | collection / atomic | user |
 | GET | `/provinces/{id}/districts` | scoped collection | user |
@@ -75,10 +76,13 @@ and `If-Modified-Since` return `304` with an empty body. Registry writes honour 
 
 | Client | Credential | Can |
 | --- | --- | --- |
-| Metering device | `X-Device-Key: sk_dev_…` (one per installation; only a SHA-256 hash is stored) | `POST` readings for **its own** installation only |
-| SLSEA user | `Authorization: Bearer <JWT>` from `POST /auth/tokens` | read within its jurisdiction; ADMIN also manages installations |
+| Metering device | `X-Device-Key: sk_dev_…` (one per installation; only a SHA-256 hash is stored), exchanged at `POST /auth/device-tokens` for `Authorization: Bearer <JWT>` (15 min, scope `installation:write`, subject = installation) | `POST` readings for **its own** installation only |
+| SLSEA user | `Authorization: Bearer <JWT>` from `POST /auth/tokens` (1 h, scope `readings:read`; ADMIN also `registry:write`) | read within its jurisdiction; ADMIN also manages installations |
 
-- A device key on a read endpoint gets `403`, and a user token on the ingestion endpoint gets `403`.
+- Scopes say *what* a token may do; jurisdiction claims and the token subject say *where*, and
+  those finer attribute-based checks run on every record.
+- A device key or device token on a read endpoint gets `403`, and a user token on the ingestion
+  endpoint gets `403`. The raw device key is not accepted on the ingestion endpoint (`401`).
 - Jurisdiction: `NATIONAL` / `ADMIN` see the whole country, `PROVINCIAL` sees one province and
   `DISTRICT` sees one district. Out-of-scope resources, and filters that ask for them, get `403`.
 - Passwords are hashed with bcrypt, the login endpoint is rate limited, and `helmet` sets the
@@ -110,7 +114,7 @@ npm run smoke          # end-to-end checks against the running server
 | `npm run seed` | Seed 9 provinces, 25 districts, 30 substations, 240 installations, 7 users, 7+ days of 15-min readings |
 | `npm run device-key -- <meter_id>` | Print a seeded device's API key |
 | `npm run simulate -- <base-url>` | Push each device's due readings through the API |
-| `npm run smoke -- <base-url>` | 50 end-to-end checks of the design spine |
+| `npm run smoke -- <base-url>` | 54 end-to-end checks of the design spine |
 
 ## Deployment (Render + MongoDB Atlas)
 
@@ -120,7 +124,7 @@ npm run smoke          # end-to-end checks against the running server
 2. **Seed** from your machine against Atlas: put the Atlas values in `.env`, then run `npm run seed`.
 3. **Render:** *New → Blueprint* and pick this repo (it reads [render.yaml](render.yaml)). Enter
    `MONGO_USER`, `MONGO_PASSWORD` and `MONGO_CLUSTER`; `JWT_SECRET` is generated for you.
-4. **Verify:** `npm run smoke -- https://slsea-solar-api-3w9p.onrender.com` (all 50 checks pass).
+4. **Verify:** `npm run smoke -- https://slsea-solar-api-3w9p.onrender.com` (all checks pass).
 5. **Keep readings live (optional):** in GitHub *Settings → Secrets and variables → Actions*, add
    the variable `API_BASE_URL` and the secrets `DEVICE_KEY_SECRET` and `SEED_USER_PASSWORD`. The
    [simulate-devices](.github/workflows/simulate-devices.yml) workflow then pushes readings every
