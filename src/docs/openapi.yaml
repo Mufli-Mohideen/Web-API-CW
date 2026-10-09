@@ -7,10 +7,13 @@ info:
     rooftop-solar data system. JSON is the only representation.
 
     **Two kinds of client, two credentials**
-    - **Metering devices (write-clients)** authenticate each request with their installation's
-      API key in the `X-Device-Key` header and may only `POST` readings for their own installation.
+    - **Metering devices (write-clients)** exchange their installation's API key (`X-Device-Key`)
+      at `POST /auth/device-tokens` for a short-lived JWT with the `installation:write` scope, and
+      send it as `Authorization: Bearer <token>`. They may only `POST` readings for their own
+      installation (the token subject); the raw key is not accepted when writing readings.
     - **SLSEA users (read-clients)** exchange email + password at `POST /auth/tokens` for a JWT and
-      send it as `Authorization: Bearer <token>`. What they can read is scoped by jurisdiction:
+      send it as `Authorization: Bearer <token>`. User tokens carry the `readings:read` scope, and
+      ADMIN tokens also carry `registry:write`. What they can read is scoped by jurisdiction:
       `NATIONAL`/`ADMIN` → the whole country, `PROVINCIAL` → one province, `DISTRICT` → one district.
       Only `ADMIN` may manage the installation registry. No user can write readings.
 
@@ -32,7 +35,7 @@ servers:
   - url: /api/v1
 tags:
   - name: Auth
-    description: Credential exchange for SLSEA users
+    description: Credential exchange for SLSEA users and metering devices
   - name: Hierarchy
     description: Provinces, districts and grid substations
   - name: Installations
@@ -82,6 +85,27 @@ paths:
               schema: { $ref: '#/components/schemas/TokenResponse' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/device-tokens:
+    post:
+      tags: [Auth]
+      summary: Exchange a device API key for a scoped JWT (metering device)
+      description: |
+        The device presents its installation's API key once and receives a short-lived access
+        token (default 15 minutes) with the `installation:write` scope, whose subject is the
+        installation. That token is then used as `Authorization: Bearer <token>` when posting
+        readings.
+      security:
+        - deviceKey: []
+      responses:
+        '200':
+          description: Device access token issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceTokenResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /users/me:
@@ -567,13 +591,13 @@ paths:
       tags: [Readings]
       summary: Ingest a generation reading (metering device)
       description: |
-        A device authenticates as its installation (`X-Device-Key`) and may only write to its own
-        installation. Re-sending an identical reading (e.g. after a timeout) returns `200` with the
+        A device authenticates as its installation with a JWT from `POST /auth/device-tokens`
+        (scope `installation:write`) and may only write to its own installation. Re-sending an identical reading (e.g. after a timeout) returns `200` with the
         existing reading's `Location` instead of creating a duplicate; a *different* reading for the
         same timestamp is a `409`. Readings that break domain rules (future timestamp, power above
         capacity, cumulative energy going backwards) are `422`.
       security:
-        - deviceKey: []
+        - deviceBearer: []
       requestBody:
         required: true
         content:
@@ -670,12 +694,17 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: SLSEA user access token from POST /auth/tokens (read path).
+      description: SLSEA user access token from POST /auth/tokens (scopes readings:read, and registry:write for ADMIN).
+    deviceBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Metering device access token from POST /auth/device-tokens (scope installation:write).
     deviceKey:
       type: apiKey
       in: header
       name: X-Device-Key
-      description: Metering device API key of one installation (write path).
+      description: Metering device API key of one installation; only used to obtain a device token.
 
   headers:
     ETag:
@@ -883,6 +912,15 @@ components:
         token_type: { type: string, example: Bearer }
         expires_in: { type: integer, example: 3600, description: Seconds }
         user: { $ref: '#/components/schemas/User' }
+    DeviceTokenResponse:
+      type: object
+      properties:
+        access_token: { type: string }
+        token_type: { type: string, example: Bearer }
+        expires_in: { type: integer, example: 900, description: Seconds }
+        scope: { type: string, example: 'installation:write' }
+        installation_id: { type: string, example: 65f0a1b2c3d4e5f600000001 }
+        meter_id: { type: string, example: SLM-000001 }
     User:
       type: object
       properties:
