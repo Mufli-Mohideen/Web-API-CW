@@ -10,7 +10,8 @@ import { sendPage } from '../http/listing';
 import { methodNotAllowed } from '../http/methodNotAllowed';
 import { absoluteUrl } from '../http/urls';
 import { pageQuery, parse, sortParam } from '../http/validation';
-import { authenticateUser, requireRole } from '../middleware/authenticate';
+import { SCOPES } from '../auth/tokens';
+import { authenticateUser, requireScope } from '../middleware/authenticate';
 import { toInstallation } from '../representations';
 import { dailyEnergy, findLatestReading, toLatestReading } from '../services/generation';
 import { assertFiltersInScope, loadInstallation } from '../services/lookups';
@@ -48,7 +49,7 @@ installationsRouter
       modifiedAt: (i) => i.updated_at,
     });
   })
-  .post(authenticateUser, requireRole('ADMIN'), async (req, res) => {
+  .post(authenticateUser, requireScope(SCOPES.registryWrite), async (req, res) => {
     const input = parse(createBody, req.body, 'body');
     const doc = await buildInstallation(input);
     const deviceKey = generateDeviceKey();
@@ -175,14 +176,14 @@ installationsRouter
     sendRepresentation(req, res, toInstallation(installation), { lastModified: installation.updated_at });
   })
   // PUT is idempotent: replaying the same full representation leaves the same state.
-  .put(authenticateUser, requireRole('ADMIN'), async (req, res) => {
+  .put(authenticateUser, requireScope(SCOPES.registryWrite), async (req, res) => {
     const current = await loadInstallation(req.user!, req.params.installationId);
     checkIfMatch(req, toInstallation(current));
     const input = parse(replaceBody, req.body, 'body');
     const updated = await replaceInstallation(current, input);
     sendRepresentation(req, res, toInstallation(updated), { lastModified: updated.updated_at });
   })
-  .patch(authenticateUser, requireRole('ADMIN'), async (req, res) => {
+  .patch(authenticateUser, requireScope(SCOPES.registryWrite), async (req, res) => {
     const current = await loadInstallation(req.user!, req.params.installationId);
     checkIfMatch(req, toInstallation(current));
     const changes = parse(patchBody, req.body, 'body');
@@ -192,7 +193,7 @@ installationsRouter
   })
   // Generation history is append-only and must not be destroyed: an installation that has
   // reported readings is decommissioned (PATCH status) instead of deleted.
-  .delete(authenticateUser, requireRole('ADMIN'), async (req, res) => {
+  .delete(authenticateUser, requireScope(SCOPES.registryWrite), async (req, res) => {
     const current = await loadInstallation(req.user!, req.params.installationId);
     checkIfMatch(req, toInstallation(current));
     const readings = await collections.readings().countDocuments({ installation_id: current._id }, { limit: 1 });
@@ -214,7 +215,7 @@ function pickFields(source: InstallationInput): InstallationInput {
 /** POST /installations/{installationId}/device-key - rotate a device's API key (ADMIN). */
 installationsRouter
   .route('/:installationId/device-key')
-  .post(authenticateUser, requireRole('ADMIN'), async (req, res) => {
+  .post(authenticateUser, requireScope(SCOPES.registryWrite), async (req, res) => {
     const current = await loadInstallation(req.user!, req.params.installationId);
     const deviceKey = generateDeviceKey();
     const rotatedAt = new Date();

@@ -1,9 +1,10 @@
 import type { RequestHandler } from 'express';
+import { ObjectId } from 'mongodb';
 import { hashDeviceKey } from '../auth/deviceKeys';
-import { verifyUserToken } from '../auth/tokens';
+import { hasScope, isDeviceToken, isUserToken, SCOPES, verifyDeviceToken, verifyUserToken } from '../auth/tokens';
 import { collections } from '../db';
 import { ApiError } from '../errors/ApiError';
-import type { UserRole } from '../types';
+import type { SolarInstallationDoc, UserRole } from '../types';
 
 export const DEVICE_KEY_HEADER = 'X-Device-Key';
 
@@ -11,7 +12,7 @@ function bearerToken(header: string | undefined): string | undefined {
   return header?.match(/^Bearer\s+(\S+)$/i)?.[1];
 }
 
-/** Read path: an SLSEA user presenting a JWT access token. Device keys are refused here. */
+/** Read path: an SLSEA user presenting a JWT access token with the readings:read scope. */
 export const authenticateUser: RequestHandler = (req, _res, next) => {
   const token = bearerToken(req.get('Authorization'));
   if (!token) {
@@ -22,11 +23,25 @@ export const authenticateUser: RequestHandler = (req, _res, next) => {
   }
   try {
     req.user = verifyUserToken(token);
-    next();
   } catch {
-    next(ApiError.unauthorized('The access token is invalid or has expired'));
+    if (isDeviceToken(token)) {
+      return next(ApiError.forbidden('Metering devices are write-only clients and cannot read data'));
+    }
+    return next(ApiError.unauthorized('The access token is invalid or has expired'));
   }
+  if (!hasScope(req.user.scope, SCOPES.readingsRead)) {
+    return next(ApiError.forbidden(`This operation requires the ${SCOPES.readingsRead} scope`));
+  }
+  next();
 };
+
+/** Requires a scope on the authenticated user's token (e.g. registry:write for registry changes). */
+export function requireScope(scope: string): RequestHandler {
+  return (req, _res, next) => {
+    if (req.user && hasScope(req.user.scope, scope)) return next();
+    next(ApiError.forbidden(`This operation requires the ${scope} scope`));
+  };
+}
 
 export function requireRole(...roles: UserRole[]): RequestHandler {
   return (req, _res, next) => {
@@ -35,19 +50,52 @@ export function requireRole(...roles: UserRole[]): RequestHandler {
   };
 }
 
-/** Write path: a metering device authenticating as its installation with its API key. */
-export const authenticateDevice: RequestHandler = async (req, _res, next) => {
-  const key = req.get(DEVICE_KEY_HEADER);
-  if (!key) {
-    if (bearerToken(req.get('Authorization'))) {
-      return next(ApiError.forbidden('SLSEA users are read-only clients and cannot write generation readings'));
-    }
-    return next(ApiError.unauthorized(`A device API key is required in the ${DEVICE_KEY_HEADER} header`));
-  }
-
+/**
+ * Looks up the installation an API key belongs to. Used only by the token exchange
+ * (POST /auth/device-tokens); the key itself is never accepted on the ingestion route.
+ */
+export async function installationForDeviceKey(key: string): Promise<SolarInstallationDoc> {
   const installation = await collections.installations().findOne({ api_key_hash: hashDeviceKey(key) });
   if (!installation || installation.status === 'DECOMMISSIONED') {
-    return next(ApiError.unauthorized('The device API key is not recognised'));
+    throw ApiError.unauthorized('The device API key is not recognised');
+  }
+  if (installation.status !== 'ACTIVE') {
+    throw ApiError.forbidden('This installation is inactive and cannot report readings');
+  }
+  return installation;
+}
+
+/**
+ * Write path: a metering device presenting its short-lived JWT (scope installation:write).
+ * The token subject is the installation the device acts as.
+ */
+export const authenticateDevice: RequestHandler = async (req, _res, next) => {
+  const token = bearerToken(req.get('Authorization'));
+  if (!token) {
+    if (req.get(DEVICE_KEY_HEADER)) {
+      return next(ApiError.unauthorized('Exchange the device API key for an access token at POST /auth/device-tokens'));
+    }
+    return next(ApiError.unauthorized('A device access token is required'));
+  }
+
+  let claims;
+  try {
+    claims = verifyDeviceToken(token);
+  } catch {
+    if (isUserToken(token)) {
+      return next(ApiError.forbidden('SLSEA users are read-only clients and cannot write generation readings'));
+    }
+    return next(ApiError.unauthorized('The device access token is invalid or has expired'));
+  }
+  if (!hasScope(claims.scope, SCOPES.installationWrite) || !ObjectId.isValid(claims.sub)) {
+    return next(ApiError.forbidden(`This operation requires the ${SCOPES.installationWrite} scope`));
+  }
+
+  // Re-check the installation on every write, so a decommissioned or deactivated site
+  // stops reporting immediately rather than when its token expires.
+  const installation = await collections.installations().findOne({ _id: new ObjectId(claims.sub) });
+  if (!installation || installation.status === 'DECOMMISSIONED') {
+    return next(ApiError.unauthorized('The device is no longer registered'));
   }
   if (installation.status !== 'ACTIVE') {
     return next(ApiError.forbidden('This installation is inactive and cannot report readings'));
