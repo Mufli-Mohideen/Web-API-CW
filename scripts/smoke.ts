@@ -67,8 +67,18 @@ async function main() {
   const admin = await login('admin@slsea.lk');
   check('Users obtain JWT access tokens', Boolean(national && colombo && western && admin));
 
-  const deviceRead = await call('GET', '/provinces', { device: deviceKey });
-  check('Device key on the read path -> 403', deviceRead.status === 403, deviceRead.text);
+  const exchange = await call('POST', '/auth/device-tokens', { device: deviceKey });
+  check('Device key exchanged for a JWT with the installation:write scope',
+    exchange.status === 200 && Boolean(exchange.json?.access_token) && exchange.json?.scope === 'installation:write' && exchange.json?.installation_id === INSTALLATION,
+    exchange.text);
+  const device = exchange.json?.access_token as string;
+  const badKey = await call('POST', '/auth/device-tokens', { device: 'sk_dev_not-a-real-key' });
+  check('Unknown device key -> 401', badKey.status === 401, badKey.text);
+
+  const deviceRead = await call('GET', '/provinces', { token: device });
+  check('Device token on the read path -> 403', deviceRead.status === 403, deviceRead.text);
+  const keyRead = await call('GET', '/provinces', { device: deviceKey });
+  check('Device key on the read path -> 403', keyRead.status === 403, keyRead.text);
   const userWrite = await call('POST', `/installations/${INSTALLATION}/readings`, {
     token: admin,
     body: { timestamp: new Date().toISOString(), power_kw: 1, energy_kwh: 1, voltage_v: 230 },
@@ -148,28 +158,30 @@ async function main() {
     voltage_v: 230.4,
   };
   const noKey = await call('POST', `/installations/${INSTALLATION}/readings`, { body: reading });
-  check('Ingest without device key -> 401', noKey.status === 401, noKey.text);
-  const created = await call('POST', `/installations/${INSTALLATION}/readings`, { device: deviceKey, body: reading });
+  check('Ingest without device token -> 401', noKey.status === 401, noKey.text);
+  const rawKey = await call('POST', `/installations/${INSTALLATION}/readings`, { device: deviceKey, body: reading });
+  check('Ingest with the raw device key (no token) -> 401', rawKey.status === 401, rawKey.text);
+  const created = await call('POST', `/installations/${INSTALLATION}/readings`, { token: device, body: reading });
   check('Ingest -> 201 Created + Location + ETag', created.status === 201 && Boolean(created.headers.get('location') && created.headers.get('etag')), created.text);
   const location = created.headers.get('location');
   if (location) {
     const fetched = await fetch(location, { headers: { Authorization: `Bearer ${national}` } });
     check('Location resolves to the new reading', fetched.status === 200);
   }
-  const replay = await call('POST', `/installations/${INSTALLATION}/readings`, { device: deviceKey, body: reading });
+  const replay = await call('POST', `/installations/${INSTALLATION}/readings`, { token: device, body: reading });
   check('Identical retry -> 200, not duplicated', replay.status === 200 && replay.headers.get('location') === location, replay.text);
-  const conflicting = await call('POST', `/installations/${INSTALLATION}/readings`, { device: deviceKey, body: { ...reading, power_kw: reading.power_kw + 1 } });
+  const conflicting = await call('POST', `/installations/${INSTALLATION}/readings`, { token: device, body: { ...reading, power_kw: reading.power_kw + 1 } });
   check('Different reading, same timestamp -> 409', conflicting.status === 409, conflicting.text);
   const regression = await call('POST', `/installations/${INSTALLATION}/readings`, {
-    device: deviceKey,
+    token: device,
     body: { ...reading, timestamp: new Date(Date.parse(reading.timestamp) + 1000).toISOString(), energy_kwh: 1 },
   });
   check('Cumulative energy going backwards -> 422', regression.status === 422, regression.text);
-  const invalid = await call('POST', `/installations/${INSTALLATION}/readings`, { device: deviceKey, body: { power_kw: -1 } });
+  const invalid = await call('POST', `/installations/${INSTALLATION}/readings`, { token: device, body: { power_kw: -1 } });
   check('Malformed reading -> 400 with details', invalid.status === 400 && invalid.json?.error?.details?.length > 0, invalid.text);
-  const foreign = await call('POST', `/installations/${OTHER_INSTALLATION}/readings`, { device: deviceKey, body: reading });
+  const foreign = await call('POST', `/installations/${OTHER_INSTALLATION}/readings`, { token: device, body: reading });
   check("Device writing another installation's readings -> 403", foreign.status === 403, foreign.text);
-  const textBody = await call('POST', `/installations/${INSTALLATION}/readings`, { device: deviceKey, body: 'x', headers: { 'Content-Type': 'text/plain' } });
+  const textBody = await call('POST', `/installations/${INSTALLATION}/readings`, { token: device, body: 'x', headers: { 'Content-Type': 'text/plain' } });
   check('Non-JSON body -> 415', textBody.status === 415, textBody.text);
   if (location) {
     const readingPath = location.slice(location.indexOf('/api/v1') + '/api/v1'.length);

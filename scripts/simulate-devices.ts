@@ -1,7 +1,8 @@
 /**
  * Device simulator: acts as every ACTIVE installation's metering device and pushes the
  * readings due since its last report, through the public write path
- * (POST /installations/{id}/readings with X-Device-Key). Keeps the deployed dataset "live".
+ * (exchanges each device's X-Device-Key for a scoped JWT at POST /auth/device-tokens, then
+ * POST /installations/{id}/readings with that Bearer token). Keeps the deployed dataset "live".
  *
  * Usage: npm run simulate -- https://your-deployment.example.com
  * Env:   DEVICE_KEY_SECRET (as used to seed), SEED_USER_PASSWORD (to read the last report)
@@ -58,10 +59,23 @@ async function main() {
       energy += slot.energyIncrementKwh;
       due.push({ timestamp: new Date(t).toISOString(), power_kw: slot.powerKw, energy_kwh: Math.round(energy * 1000) / 1000, voltage_v: slot.voltageV });
     }
-    for (const reading of due.slice(-MAX_POSTS_PER_DEVICE)) {
+    const toPost = due.slice(-MAX_POSTS_PER_DEVICE);
+    if (toPost.length === 0) return;
+    // A device authenticates with its key once, then writes with the short-lived scoped token.
+    const exchange = await fetch(`${base}/auth/device-tokens`, {
+      method: 'POST',
+      headers: { 'X-Device-Key': deriveDeviceKey(secret, installation.meter_id) },
+    });
+    if (!exchange.ok) {
+      stats.failed += toPost.length;
+      console.warn(`${installation.meter_id}: token exchange failed ${exchange.status} ${await exchange.text()}`);
+      return;
+    }
+    const deviceToken = (await json(exchange)).access_token as string;
+    for (const reading of toPost) {
       const res = await fetch(`${base}/installations/${installation.id}/readings`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Device-Key': deriveDeviceKey(secret, installation.meter_id) },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${deviceToken}` },
         body: JSON.stringify(reading),
       });
       if (res.status === 201) stats.created += 1;
